@@ -32,6 +32,24 @@ class ExplorationRecord:
     novelty: float | None = None  # filled after observation is saved
 
 
+@dataclass
+class MovementRecord:
+    """Record of a body movement (walk).
+
+    Duration is the raw command parameter (seconds).  Estimated distance
+    and rotation are placeholders for future body-parameter learning —
+    once calibrated, the agent can think in metres / degrees instead of
+    raw seconds.
+    """
+
+    timestamp: str
+    direction: str  # forward | backward | left | right
+    duration: float  # seconds commanded
+    # Future: populated by body-parameter calibration
+    estimated_distance: float | None = None  # metres
+    estimated_rotation: float | None = None  # degrees
+
+
 class ExplorationTracker:
     """Track camera exploration history within a session.
 
@@ -42,6 +60,7 @@ class ExplorationTracker:
 
     def __init__(self) -> None:
         self._records: list[ExplorationRecord] = []
+        self._movements: list[MovementRecord] = []
         self._pan_accum: float = 0.0
         self._tilt_accum: float = 0.0
 
@@ -60,6 +79,16 @@ class ExplorationTracker:
                 direction_label=label,
                 pan_accum=self._pan_accum,
                 tilt_accum=self._tilt_accum,
+            )
+        )
+
+    def record_walk(self, direction: str, duration: float) -> None:
+        """Record a body movement. Called whenever 'walk' tool is used."""
+        self._movements.append(
+            MovementRecord(
+                timestamp=datetime.now().strftime("%H:%M"),
+                direction=direction.lower(),
+                duration=duration,
             )
         )
 
@@ -95,21 +124,33 @@ class ExplorationTracker:
 
     def context_for_prompt(self, n: int = 5) -> str:
         """Return a compact exploration summary for LLM context injection."""
-        if not self._records:
+        has_looks = bool(self._records)
+        has_walks = bool(self._movements)
+        if not has_looks and not has_walks:
             return ""
 
-        recent = self._records[-n:]
-        lines = ["[Exploration context — last observations]"]
-        for r in recent:
-            if r.novelty is None:
-                novelty_str = "?"
-            elif r.novelty >= 0.7:
-                novelty_str = "HIGH"
-            elif r.novelty <= 0.35:
-                novelty_str = "LOW"
-            else:
-                novelty_str = "MED"
-            lines.append(f"  - {r.timestamp} {r.direction_label} (novelty: {novelty_str})")
+        lines = ["[Exploration context — recent activity]"]
+
+        if has_looks:
+            recent = self._records[-n:]
+            for r in recent:
+                if r.novelty is None:
+                    novelty_str = "?"
+                elif r.novelty >= 0.7:
+                    novelty_str = "HIGH"
+                elif r.novelty <= 0.35:
+                    novelty_str = "LOW"
+                else:
+                    novelty_str = "MED"
+                lines.append(
+                    f"  - {r.timestamp} looked {r.direction_label} (novelty: {novelty_str})"
+                )
+
+        if has_walks:
+            recent_walks = self._movements[-n:]
+            for m in recent_walks:
+                dur_str = f"{m.duration:.1f}s" if m.duration else "brief"
+                lines.append(f"  - {m.timestamp} walked {m.direction} ({dur_str})")
 
         hint = self.unvisited_hint()
         if hint:

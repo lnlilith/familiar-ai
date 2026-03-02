@@ -443,7 +443,26 @@ class EmbodiedAgent:
                 )
             return result
         elif name in mobility_tools and self._mobility:
-            return await self._mobility.call(name, tool_input)
+            result_text, _ = await self._mobility.call(name, tool_input)
+            direction = tool_input.get("direction", "forward")
+            duration = tool_input.get("duration", 0)
+
+            # Track movement for exploration context
+            if direction != "stop":
+                self._exploration.record_walk(direction, duration or 0)
+
+            # Perception feedback: auto-capture after movement so the agent
+            # experiences how its action changed the visual world.
+            if direction != "stop" and self._camera:
+                await asyncio.sleep(0.3)  # let the robot settle
+                post_b64, _ = await self._camera.capture()
+                if post_b64:
+                    return (
+                        f"{result_text} You now see a new view after moving.",
+                        post_b64,
+                    )
+
+            return result_text, None
         elif name in tts_tools and self._tts:
             return await self._tts.call(name, tool_input)
         elif name in memory_tools:
